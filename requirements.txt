@@ -1,0 +1,41 @@
+# FastAPI and ASGI
+fastapi
+uvicorn[standard]
+gunicorn
+
+PyJWT
+paynow
+
+# Database
+asyncpg
+sqlalchemy[asyncio]
+alembic
+
+# Authentication & Security
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+
+# Validation & Serialization
+pydantic
+pydantic-settings
+email-validator
+
+# HTTP Client
+httpx
+
+# Utilities
+python-dotenv
+redis
+celery
+
+# Monitoring & Logging
+structlog
+
+# Image Processing (optional)
+pillow
+
+# Testing (optional)
+pytest
+pytest-asyncio
+httpx
