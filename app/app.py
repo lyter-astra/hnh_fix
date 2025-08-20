@@ -92,7 +92,6 @@ app.add_middleware(
         "https://houseandhome.co.zw/",  # Add your production frontend URL
         # Or use ["*"] to allow all origins (not recommended for production)
     ],
-)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],  # Allows all headers
