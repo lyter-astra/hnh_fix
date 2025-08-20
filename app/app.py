@@ -87,7 +87,8 @@ app.add_middleware(
     allow_origins=["*"],  # Allow all origins in development
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"],  # Allows all headers
+    expose_headers=["*"]  # Exposes all headers to the frontend
 )
 
 # Trusted Host middleware (only in production)
