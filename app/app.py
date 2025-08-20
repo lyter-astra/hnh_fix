@@ -91,11 +91,11 @@ app.add_middleware(
 )
 
 # Trusted Host middleware (only in production)
-if settings.environment == "production":
-    app.add_middleware(
-        TrustedHostMiddleware,
-        allowed_hosts=["houseandhome.co.zw", "*.houseandhome.co.zw"]
-    )
+# if settings.environment == "production":
+#     app.add_middleware(
+#         TrustedHostMiddleware,
+#         allowed_hosts=["houseandhome.co.zw", "*.houseandhome.co.zw"]
+#     )
 
 # Middleware to measure request processing time
 @app.middleware("http")
