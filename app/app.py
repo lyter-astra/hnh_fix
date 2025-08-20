@@ -78,8 +78,8 @@ app = FastAPI(
         ---
     """,
     lifespan=lifespan,
-    docs_url="/docs" if settings.debug else None,
-    redoc_url="/redoc" if settings.debug else None,
+    docs_url="/cfewrewrtw4t5w46547y6ththgfdsfdosdfdsfcfdsfs" if settings.debug else None,
+    redoc_url="/rsdfdedsfdsdsfsdrbetergergregtreghdfdsfsdoc" if settings.debug else None,
 )
 
 app.add_middleware(
@@ -87,14 +87,14 @@ app.add_middleware(
     allow_origins=["*"],  # Allow all origins in development
     allow_credentials=True,
     allow_methods=["*"],
-    expose_headers=["*"]  # Exposes all headers to the frontend
+    # expose_headers=["*"]  # Exposes all headers to the frontend
 )
 
 # Trusted Host middleware (only in production)
 if settings.environment == "production":
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=["houseandhome.co.zw", "*.houseandhome.co.zw"]
+        allowed_hosts=["houseandhome.co.zw", "*.houseandhome.co.zw", "localhost:8080"]
     )
 
 # Middleware to measure request processing time
