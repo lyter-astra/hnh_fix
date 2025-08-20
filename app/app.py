@@ -32,6 +32,7 @@ async def initialize_schema():
     except Exception as e:
         print(f"❌ Failed to initialize schema: {e}")
 
+
 # Application lifecycle management
 @asynccontextmanager
 async def lifespan(app: FastAPI):
