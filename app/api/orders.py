@@ -364,303 +364,165 @@ async def get_order(
     return order
 
 # In your orders router, update the order creation endpoint with better error handling:
-
-@router.post("/", response_model=OrderResponse)
+@router.post("/", response_model=OrderSchema, status_code=status.HTTP_201_CREATED)
 async def create_order(
-    order_data: CreateOrderRequest,
+    order_data: OrderCreate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a new order from cart items"""
+    """Create new order from cart."""
+    # Get cart items
+    cart_result = await db.execute(
+        select(CartItem)
+        .options(selectinload(CartItem.product))
+        .where(CartItem.user_id == current_user.id)
+    )
+    cart_items = cart_result.scalars().all()
     
-    try:
-        # Log incoming request for debugging
-        logger.info(f"Creating order for user {current_user.id} with data: {order_data.dict()}")
-        
-        # Validate shipping address exists
-        if not order_data.shipping_address_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Shipping address is required"
-            )
-        
-        # Get cart items
-        cart_result = await db.execute(
-            select(CartItem)
-            .options(selectinload(CartItem.product))
-            .where(CartItem.user_id == current_user.id)
+    if not cart_items:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cart is empty"
         )
-        cart_items = cart_result.scalars().all()
-        
-        if not cart_items:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cart is empty"
+    
+    # Get shipping address
+    shipping_address_result = await db.execute(
+        select(Address).where(
+            and_(
+                Address.id == order_data.shipping_address_id,
+                Address.user_id == current_user.id
             )
-        
-        # Verify shipping address belongs to user
-        address_result = await db.execute(
+        )
+    )
+    shipping_address = shipping_address_result.scalar_one_or_none()
+    
+    if not shipping_address:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Shipping address not found"
+        )
+    
+    # Get billing address (use shipping if not specified)
+    billing_address = shipping_address
+    if order_data.billing_address_id:
+        billing_address_result = await db.execute(
             select(Address).where(
                 and_(
-                    Address.id == order_data.shipping_address_id,
+                    Address.id == order_data.billing_address_id,
                     Address.user_id == current_user.id
                 )
             )
         )
-        shipping_address = address_result.scalar_one_or_none()
+        billing_address = billing_address_result.scalar_one_or_none()
         
-        if not shipping_address:
+        if not billing_address:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Shipping address not found"
+                detail="Billing address not found"
             )
-        
-        # Calculate totals
-        subtotal = Decimal('0')
-        for item in cart_items:
-            subtotal += item.product.price * item.quantity
-        
-        # Calculate shipping (example: free over $500)
-        shipping_cost = Decimal('0') if subtotal > 500 else Decimal('49')
-        
-        # Calculate tax (15%)
-        tax_amount = subtotal * Decimal('0.15')
-        
-        # Apply coupon if provided
-        discount_amount = Decimal('0')
-        if order_data.coupon_code:
-            # Validate coupon logic here
-            # For now, just log it
-            logger.info(f"Applying coupon: {order_data.coupon_code}")
-        
-        # Calculate total
-        total_amount = subtotal + shipping_cost + tax_amount - discount_amount
-        
-        # Generate order number
-        import uuid
-        order_number = f"ORD-{uuid.uuid4().hex[:8].upper()}"
-        
-        # Create order
-        order = Order(
-            order_number=order_number,
-            user_id=current_user.id,
-            shipping_address_id=order_data.shipping_address_id,
-            billing_address_id=order_data.billing_address_id or order_data.shipping_address_id,
-            subtotal=subtotal,
-            shipping_cost=shipping_cost,
-            tax_amount=tax_amount,
-            discount_amount=discount_amount,
-            total_amount=total_amount,
-            payment_method=order_data.payment_method,
-            payment_status="pending",
-            status="pending",
-            notes=order_data.notes
+    
+    # Calculate totals
+    subtotal = sum(item.price * item.quantity for item in cart_items)
+    tax_amount = Decimal('0.00')  # Calculate based on your tax logic
+    shipping_cost = Decimal('0.00')  # Calculate based on your shipping logic
+    discount_amount = Decimal('0.00')
+    
+    # Apply coupon if provided
+    if order_data.coupon_code:
+        coupon_validation = await validate_coupon(
+            order_data.coupon_code, subtotal, current_user.id, db
         )
-        db.add(order)
-        await db.flush()  # Get order ID without committing
-        
-        # Create order items
-        for cart_item in cart_items:
-            order_item = OrderItem(
-                order_id=order.id,
-                product_id=cart_item.product_id,
-                variant_id=cart_item.variant_id,
-                product_name=cart_item.product.name,
-                product_sku=cart_item.product.sku,
-                quantity=cart_item.quantity,
-                unit_price=cart_item.product.price,
-                total_price=cart_item.product.price * cart_item.quantity
+        if not coupon_validation.valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=coupon_validation.message
             )
-            db.add(order_item)
+        discount_amount = coupon_validation.discount_amount
+    
+    total_amount = subtotal + tax_amount + shipping_cost - discount_amount
+    
+    # Generate order number
+    order_number = f"ORD-{datetime.utcnow().strftime('%Y%m%d')}-{str(uuid.uuid4())[:8].upper()}"
+    
+    # Create order
+    order = Order(
+        user_id=current_user.id,
+        order_number=order_number,
+        subtotal=subtotal,
+        tax_amount=tax_amount,
+        shipping_cost=shipping_cost,
+        discount_amount=discount_amount,
+        total_amount=total_amount,
         
-        # Clear cart
+        # Shipping address snapshot
+        shipping_first_name=shipping_address.first_name,
+        shipping_last_name=shipping_address.last_name,
+        shipping_company=shipping_address.company,
+        shipping_address_line1=shipping_address.address_line1,
+        shipping_address_line2=shipping_address.address_line2,
+        shipping_city=shipping_address.city,
+        shipping_province=shipping_address.province,
+        shipping_postal_code=shipping_address.postal_code,
+        shipping_country=shipping_address.country,
+        shipping_phone=shipping_address.phone,
+        
+        # Billing address snapshot
+        billing_first_name=billing_address.first_name,
+        billing_last_name=billing_address.last_name,
+        billing_company=billing_address.company,
+        billing_address_line1=billing_address.address_line1,
+        billing_address_line2=billing_address.address_line2,
+        billing_city=billing_address.city,
+        billing_province=billing_address.province,
+        billing_postal_code=billing_address.postal_code,
+        billing_country=billing_address.country,
+        billing_phone=billing_address.phone,
+        
+        notes=order_data.notes
+    )
+    
+    db.add(order)
+    await db.flush()  # Get order ID
+    
+    # Create order items
+    for cart_item in cart_items:
+        order_item = OrderItem(
+            order_id=order.id,
+            product_id=cart_item.product_id,
+            variant_id=cart_item.variant_id,
+            product_name=cart_item.product.name,
+            variant_name=cart_item.variant.name if cart_item.variant else None,
+            sku=cart_item.variant.sku if cart_item.variant else cart_item.product.sku,
+            quantity=cart_item.quantity,
+            unit_price=cart_item.price,
+            total_price=cart_item.price * cart_item.quantity
+        )
+        db.add(order_item)
+    
+    # Update coupon usage if applied
+    if order_data.coupon_code:
         await db.execute(
-            delete(CartItem).where(CartItem.user_id == current_user.id)
+            update(Coupon)
+            .where(Coupon.code == order_data.coupon_code)
+            .values(usage_count=Coupon.usage_count + 1)
         )
-        
-        # Commit transaction
-        await db.commit()
-        await db.refresh(order)
-        
-        logger.info(f"Order {order.id} created successfully")
-        
-        return OrderResponse(
-            id=order.id,
-            order_number=order.order_number,
-            status=order.status,
-            payment_status=order.payment_status,
-            total_amount=str(order.total_amount),
-            created_at=order.created_at.isoformat() if order.created_at else None
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error creating order: {str(e)}", exc_info=True)
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create order: {str(e)}"
-        )
-# @router.post("/", response_model=OrderSchema, status_code=status.HTTP_201_CREATED)
-# async def create_order(
-#     order_data: OrderCreate,
-#     current_user: User = Depends(get_current_active_user),
-#     db: AsyncSession = Depends(get_db)
-# ):
-#     """Create new order from cart."""
-#     # Get cart items
-#     cart_result = await db.execute(
-#         select(CartItem)
-#         .options(selectinload(CartItem.product))
-#         .where(CartItem.user_id == current_user.id)
-#     )
-#     cart_items = cart_result.scalars().all()
     
-#     if not cart_items:
-#         raise HTTPException(
-#             status_code=status.HTTP_400_BAD_REQUEST,
-#             detail="Cart is empty"
-#         )
+    # Clear cart
+    for cart_item in cart_items:
+        await db.delete(cart_item)
     
-#     # Get shipping address
-#     shipping_address_result = await db.execute(
-#         select(Address).where(
-#             and_(
-#                 Address.id == order_data.shipping_address_id,
-#                 Address.user_id == current_user.id
-#             )
-#         )
-#     )
-#     shipping_address = shipping_address_result.scalar_one_or_none()
+    await db.commit()
+    await db.refresh(order)
     
-#     if not shipping_address:
-#         raise HTTPException(
-#             status_code=status.HTTP_404_NOT_FOUND,
-#             detail="Shipping address not found"
-#         )
+    # Load order items
+    await db.execute(
+        select(Order)
+        .options(selectinload(Order.order_items))
+        .where(Order.id == order.id)
+    )
+    await db.refresh(order)
     
-#     # Get billing address (use shipping if not specified)
-#     billing_address = shipping_address
-#     if order_data.billing_address_id:
-#         billing_address_result = await db.execute(
-#             select(Address).where(
-#                 and_(
-#                     Address.id == order_data.billing_address_id,
-#                     Address.user_id == current_user.id
-#                 )
-#             )
-#         )
-#         billing_address = billing_address_result.scalar_one_or_none()
-        
-#         if not billing_address:
-#             raise HTTPException(
-#                 status_code=status.HTTP_404_NOT_FOUND,
-#                 detail="Billing address not found"
-#             )
-    
-#     # Calculate totals
-#     subtotal = sum(item.price * item.quantity for item in cart_items)
-#     tax_amount = Decimal('0.00')  # Calculate based on your tax logic
-#     shipping_cost = Decimal('0.00')  # Calculate based on your shipping logic
-#     discount_amount = Decimal('0.00')
-    
-#     # Apply coupon if provided
-#     if order_data.coupon_code:
-#         coupon_validation = await validate_coupon(
-#             order_data.coupon_code, subtotal, current_user.id, db
-#         )
-#         if not coupon_validation.valid:
-#             raise HTTPException(
-#                 status_code=status.HTTP_400_BAD_REQUEST,
-#                 detail=coupon_validation.message
-#             )
-#         discount_amount = coupon_validation.discount_amount
-    
-#     total_amount = subtotal + tax_amount + shipping_cost - discount_amount
-    
-#     # Generate order number
-#     order_number = f"ORD-{datetime.utcnow().strftime('%Y%m%d')}-{str(uuid.uuid4())[:8].upper()}"
-    
-#     # Create order
-#     order = Order(
-#         user_id=current_user.id,
-#         order_number=order_number,
-#         subtotal=subtotal,
-#         tax_amount=tax_amount,
-#         shipping_cost=shipping_cost,
-#         discount_amount=discount_amount,
-#         total_amount=total_amount,
-        
-#         # Shipping address snapshot
-#         shipping_first_name=shipping_address.first_name,
-#         shipping_last_name=shipping_address.last_name,
-#         shipping_company=shipping_address.company,
-#         shipping_address_line1=shipping_address.address_line1,
-#         shipping_address_line2=shipping_address.address_line2,
-#         shipping_city=shipping_address.city,
-#         shipping_province=shipping_address.province,
-#         shipping_postal_code=shipping_address.postal_code,
-#         shipping_country=shipping_address.country,
-#         shipping_phone=shipping_address.phone,
-        
-#         # Billing address snapshot
-#         billing_first_name=billing_address.first_name,
-#         billing_last_name=billing_address.last_name,
-#         billing_company=billing_address.company,
-#         billing_address_line1=billing_address.address_line1,
-#         billing_address_line2=billing_address.address_line2,
-#         billing_city=billing_address.city,
-#         billing_province=billing_address.province,
-#         billing_postal_code=billing_address.postal_code,
-#         billing_country=billing_address.country,
-#         billing_phone=billing_address.phone,
-        
-#         notes=order_data.notes
-#     )
-    
-#     db.add(order)
-#     await db.flush()  # Get order ID
-    
-#     # Create order items
-#     for cart_item in cart_items:
-#         order_item = OrderItem(
-#             order_id=order.id,
-#             product_id=cart_item.product_id,
-#             variant_id=cart_item.variant_id,
-#             product_name=cart_item.product.name,
-#             variant_name=cart_item.variant.name if cart_item.variant else None,
-#             sku=cart_item.variant.sku if cart_item.variant else cart_item.product.sku,
-#             quantity=cart_item.quantity,
-#             unit_price=cart_item.price,
-#             total_price=cart_item.price * cart_item.quantity
-#         )
-#         db.add(order_item)
-    
-#     # Update coupon usage if applied
-#     if order_data.coupon_code:
-#         await db.execute(
-#             update(Coupon)
-#             .where(Coupon.code == order_data.coupon_code)
-#             .values(usage_count=Coupon.usage_count + 1)
-#         )
-    
-#     # Clear cart
-#     for cart_item in cart_items:
-#         await db.delete(cart_item)
-    
-#     await db.commit()
-#     await db.refresh(order)
-    
-#     # Load order items
-#     await db.execute(
-#         select(Order)
-#         .options(selectinload(Order.order_items))
-#         .where(Order.id == order.id)
-#     )
-#     await db.refresh(order)
-    
-#     return order
+    return order
 
 
 # Payment Management
