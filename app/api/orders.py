@@ -48,7 +48,7 @@ async def get_cart_items(
     cart_items = result.scalars().all()
     return cart_items
 
-
+# Fixed add_to_cart endpoint
 @router.post("/cart", response_model=CartItemSchema, status_code=status.HTTP_201_CREATED)
 async def add_to_cart(
     cart_item_data: CartItemCreate,
@@ -89,7 +89,9 @@ async def add_to_cart(
     
     # Check if item already exists in cart
     existing_item_result = await db.execute(
-        select(CartItem).where(
+        select(CartItem)
+        .options(selectinload(CartItem.product))  # Add eager loading here
+        .where(
             and_(
                 CartItem.user_id == current_user.id,
                 CartItem.product_id == cart_item_data.product_id,
@@ -104,7 +106,13 @@ async def add_to_cart(
         existing_item.quantity += cart_item_data.quantity
         await db.commit()
         await db.refresh(existing_item)
-        return existing_item
+        # Reload with product relationship
+        result = await db.execute(
+            select(CartItem)
+            .options(selectinload(CartItem.product))
+            .where(CartItem.id == existing_item.id)
+        )
+        return result.scalar_one()
     
     # Create new cart item
     cart_item = CartItem(
@@ -117,19 +125,99 @@ async def add_to_cart(
     
     db.add(cart_item)
     await db.commit()
-    await db.refresh(cart_item)
     
-    # Load product relationship
-    await db.execute(
+    # Properly load the cart item with product relationship
+    result = await db.execute(
         select(CartItem)
         .options(selectinload(CartItem.product))
         .where(CartItem.id == cart_item.id)
     )
-    await db.refresh(cart_item)
+    return result.scalar_one()
+
+
+
+# @router.post("/cart", response_model=CartItemSchema, status_code=status.HTTP_201_CREATED)
+# async def add_to_cart(
+#     cart_item_data: CartItemCreate,
+#     current_user: User = Depends(get_current_active_user),
+#     db: AsyncSession = Depends(get_db)
+# ):
+#     """Add item to cart."""
+#     # Check if product exists
+#     product_result = await db.execute(
+#         select(Product).where(Product.id == cart_item_data.product_id)
+#     )
+#     product = product_result.scalar_one_or_none()
     
-    return cart_item
+#     if not product:
+#         raise HTTPException(
+#             status_code=status.HTTP_404_NOT_FOUND,
+#             detail="Product not found"
+#         )
+    
+#     # Check if variant exists (if specified)
+#     variant_price = None
+#     if cart_item_data.variant_id:
+#         variant_result = await db.execute(
+#             select(ProductVariant).where(
+#                 and_(
+#                     ProductVariant.id == cart_item_data.variant_id,
+#                     ProductVariant.product_id == cart_item_data.product_id
+#                 )
+#             )
+#         )
+#         variant = variant_result.scalar_one_or_none()
+#         if not variant:
+#             raise HTTPException(
+#                 status_code=status.HTTP_404_NOT_FOUND,
+#                 detail="Product variant not found"
+#             )
+#         variant_price = variant.price
+    
+#     # Check if item already exists in cart
+#     existing_item_result = await db.execute(
+#         select(CartItem).where(
+#             and_(
+#                 CartItem.user_id == current_user.id,
+#                 CartItem.product_id == cart_item_data.product_id,
+#                 CartItem.variant_id == cart_item_data.variant_id
+#             )
+#         )
+#     )
+#     existing_item = existing_item_result.scalar_one_or_none()
+    
+#     if existing_item:
+#         # Update quantity
+#         existing_item.quantity += cart_item_data.quantity
+#         await db.commit()
+#         await db.refresh(existing_item)
+#         return existing_item
+    
+#     # Create new cart item
+#     cart_item = CartItem(
+#         user_id=current_user.id,
+#         product_id=cart_item_data.product_id,
+#         variant_id=cart_item_data.variant_id,
+#         quantity=cart_item_data.quantity,
+#         price=variant_price or product.price
+#     )
+    
+#     db.add(cart_item)
+#     await db.commit()
+#     await db.refresh(cart_item)
+    
+#     # Load product relationship
+#     await db.execute(
+#         select(CartItem)
+#         .options(selectinload(CartItem.product))
+#         .where(CartItem.id == cart_item.id)
+#     )
+#     await db.refresh(cart_item)
+    
+#     return cart_item
 
 
+# Also fix the update_cart_item endpoint for consistency
 @router.put("/cart/{cart_item_id}", response_model=CartItemSchema)
 async def update_cart_item(
     cart_item_id: int,
@@ -139,7 +227,9 @@ async def update_cart_item(
 ):
     """Update cart item quantity."""
     result = await db.execute(
-        select(CartItem).where(
+        select(CartItem)
+        .options(selectinload(CartItem.product))  # Add eager loading
+        .where(
             and_(
                 CartItem.id == cart_item_id,
                 CartItem.user_id == current_user.id
@@ -161,9 +251,50 @@ async def update_cart_item(
     
     cart_item.quantity = cart_item_update.quantity
     await db.commit()
-    await db.refresh(cart_item)
     
-    return cart_item
+    # Reload with product relationship
+    result = await db.execute(
+        select(CartItem)
+        .options(selectinload(CartItem.product))
+        .where(CartItem.id == cart_item.id)
+    )
+    return result.scalar_one()
+
+
+# @router.put("/cart/{cart_item_id}", response_model=CartItemSchema)
+# async def update_cart_item(
+#     cart_item_id: int,
+#     cart_item_update: CartItemUpdate,
+#     current_user: User = Depends(get_current_active_user),
+#     db: AsyncSession = Depends(get_db)
+# ):
+#     """Update cart item quantity."""
+#     result = await db.execute(
+#         select(CartItem).where(
+#             and_(
+#                 CartItem.id == cart_item_id,
+#                 CartItem.user_id == current_user.id
+#             )
+#         )
+#     )
+#     cart_item = result.scalar_one_or_none()
+    
+#     if not cart_item:
+#         raise HTTPException(
+#             status_code=status.HTTP_404_NOT_FOUND,
+#             detail="Cart item not found"
+#         )
+    
+#     if cart_item_update.quantity <= 0:
+#         await db.delete(cart_item)
+#         await db.commit()
+#         return {"message": "Item removed from cart"}
+    
+#     cart_item.quantity = cart_item_update.quantity
+#     await db.commit()
+#     await db.refresh(cart_item)
+    
+#     return cart_item
 
 
 @router.delete("/cart/{cart_item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -230,7 +361,7 @@ async def get_wishlist_items(
     wishlist_items = result.scalars().all()
     return wishlist_items
 
-
+# Fixed add_to_wishlist endpoint
 @router.post("/wishlist", response_model=WishlistItemSchema, status_code=status.HTTP_201_CREATED)
 async def add_to_wishlist(
     wishlist_item_data: WishlistItemCreate,
@@ -274,17 +405,71 @@ async def add_to_wishlist(
     
     db.add(wishlist_item)
     await db.commit()
-    await db.refresh(wishlist_item)
     
-    # Load product relationship
-    await db.execute(
+    # Properly load the wishlist item with product relationship
+    result = await db.execute(
         select(Wishlist)
         .options(selectinload(Wishlist.product))
         .where(Wishlist.id == wishlist_item.id)
     )
-    await db.refresh(wishlist_item)
+    return result.scalar_one()
+
+
+
+# @router.post("/wishlist", response_model=WishlistItemSchema, status_code=status.HTTP_201_CREATED)
+# async def add_to_wishlist(
+#     wishlist_item_data: WishlistItemCreate,
+#     current_user: User = Depends(get_current_active_user),
+#     db: AsyncSession = Depends(get_db)
+# ):
+#     """Add item to wishlist."""
+#     # Check if product exists
+#     product_result = await db.execute(
+#         select(Product).where(Product.id == wishlist_item_data.product_id)
+#     )
+#     product = product_result.scalar_one_or_none()
     
-    return wishlist_item
+#     if not product:
+#         raise HTTPException(
+#             status_code=status.HTTP_404_NOT_FOUND,
+#             detail="Product not found"
+#         )
+    
+#     # Check if item already exists in wishlist
+#     existing_item_result = await db.execute(
+#         select(Wishlist).where(
+#             and_(
+#                 Wishlist.user_id == current_user.id,
+#                 Wishlist.product_id == wishlist_item_data.product_id
+#             )
+#         )
+#     )
+#     existing_item = existing_item_result.scalar_one_or_none()
+    
+#     if existing_item:
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail="Item already in wishlist"
+#         )
+    
+#     wishlist_item = Wishlist(
+#         user_id=current_user.id,
+#         product_id=wishlist_item_data.product_id
+#     )
+    
+#     db.add(wishlist_item)
+#     await db.commit()
+#     await db.refresh(wishlist_item)
+    
+#     # Load product relationship
+#     await db.execute(
+#         select(Wishlist)
+#         .options(selectinload(Wishlist.product))
+#         .where(Wishlist.id == wishlist_item.id)
+#     )
+#     await db.refresh(wishlist_item)
+    
+#     return wishlist_item
 
 
 @router.delete("/wishlist/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
