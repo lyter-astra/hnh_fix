@@ -82,8 +82,9 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",
+        "http://localhost:4173",
         "http://localhost:8080", 
+        "https://c4p.houseandhome.co.zw",
         "https://houseandhome.co.zw",
         "https://www.houseandhome.co.zw",
         "https://hnh-fix.onrender.com"
@@ -119,7 +120,8 @@ async def options_handler(request: Request, full_path: str):
 if settings.environment == "production":
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=["houseandhome.co.zw", "*.houseandhome.co.zw", "hnh-fix.onrender.com"]
+        allowed_hosts=["houseandhome.co.zw", "*.houseandhome.co.zw", "hnh-fix.onrender.com", 
+        "https://c4p.houseandhome.co.zw",]
     )
 
 # Middleware to measure request processing time
