@@ -552,8 +552,8 @@ async def create_order(
             )
         
         # Clear cart after successful order
-        for cart_item in cart_items:
-            await db.delete(cart_item)
+        # for cart_item in cart_items:
+        #     await db.delete(cart_item)
         
         await db.commit()
         
