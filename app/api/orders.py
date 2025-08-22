@@ -220,6 +220,24 @@ async def add_to_cart(
     await db.refresh(cart_item)
     
     # Re-fetch with eager loading
+    # final_result = await db.execute(
+    #     select(CartItem)
+    #     .options(
+    #         selectinload(CartItem.product),
+    #         selectinload(CartItem.variant)
+    #     )
+    #     .where(CartItem.id == cart_item.id)
+    # )
+    # cart_item = final_result.scalar_one()
+    
+    # # Force load the relationship attributes while in session context
+    # _ = cart_item.product
+    # if cart_item.variant:
+    #     _ = cart_item.variant
+    
+    # return cart_item
+
+    # Example fix for add_to_cart
     final_result = await db.execute(
         select(CartItem)
         .options(
@@ -230,12 +248,14 @@ async def add_to_cart(
     )
     cart_item = final_result.scalar_one()
     
-    # Force load the relationship attributes while in session context
-    _ = cart_item.product
+    # Explicitly touch relationships inside the session
+    _ = cart_item.product  
     if cart_item.variant:
-        _ = cart_item.variant
+        _ = cart_item.variant  
     
+    await db.refresh(cart_item)  # keep in session
     return cart_item
+
 
 
 # @router.put("/cart/{cart_item_id}", response_model=CartItemSchema)
@@ -499,6 +519,18 @@ async def add_to_wishlist(
     await db.refresh(wishlist_item)
     
     # Re-fetch with eager loading
+    # final_result = await db.execute(
+    #     select(Wishlist)
+    #     .options(selectinload(Wishlist.product))
+    #     .where(Wishlist.id == wishlist_item.id)
+    # )
+    # wishlist_item = final_result.scalar_one()
+    
+    # # Force load the relationship attribute while in session context
+    # _ = wishlist_item.product
+    
+    # return wishlist_item
+
     final_result = await db.execute(
         select(Wishlist)
         .options(selectinload(Wishlist.product))
@@ -506,10 +538,12 @@ async def add_to_wishlist(
     )
     wishlist_item = final_result.scalar_one()
     
-    # Force load the relationship attribute while in session context
-    _ = wishlist_item.product
+    # Explicitly access while session is alive
+    _ = wishlist_item.product  
     
+    await db.refresh(wishlist_item)
     return wishlist_item
+
 
 
 @router.delete("/wishlist/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
