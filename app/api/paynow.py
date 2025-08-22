@@ -705,7 +705,8 @@ async def payment_return(
                 payment_status = payment.status
         
         # Determine redirect URL based on payment status
-        redirect_url = f"/order-confirmation/{order.id}"
+        # redirect_url = f"/order-confirmation/{order.id}"
+        redirect_url = f"/payment-return?reference={order.id}"
         if payment_status in ["failed", "timeout", "cancelled"]:
             redirect_url = f"/cart"
         
